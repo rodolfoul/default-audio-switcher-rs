@@ -5,19 +5,15 @@ mod sink;
 
 use crate::sink::Sink;
 use audio_controller::AudioController;
-use std::{env, fmt};
-use std::io::Cursor;
-use hound::WavReader;
 use rodio::{Decoder, OutputStream};
+use std::io::{Cursor, Error};
+use std::{env, fmt, fs};
 
 fn main() -> Result<(), ApplicationError> {
 	let args: Vec<String> = env::args().collect();
 
 	let ac = AudioController::new()?;
-	if args.len() == 1 {
-		print_help();
-		return Ok(());
-	} else if args[1].eq("-l") {
+	if args.len() == 2 && args[1].eq("-l") {
 		let listing = ac.list_audio_sinks()?;
 		for s in listing {
 			println!("{:?}", s);
@@ -25,13 +21,16 @@ fn main() -> Result<(), ApplicationError> {
 		return Ok(());
 	}
 
-	if args.len() != 3 {
-		print_help();
+	let (dev1, dev2) = match process_names_config() {
+		Ok(el) => { el }
+		Err(e) => {
+			print_help();
 
-		return Err(ApplicationError::Custom("Invalid arguments. Use -l to list audio sinks or specify sinks to switch.".to_string()));
-	}
+			return Err(ApplicationError::Custom("Invalid arguments. Use -l to list audio sinks or specify sinks to switch.".to_string()));
+		}
+	};
 
-	process_switching(&ac)?;
+	process_switching(&ac, &dev1, &dev2)?;
 	play_beep()?;
 	Ok(())
 }
@@ -48,11 +47,39 @@ fn play_beep() -> Result<(), ApplicationError> {
 	Ok(())
 }
 
-fn process_switching(ac: &AudioController) -> Result<(), ApplicationError> {
+fn process_names_config() -> Result<(String, String), Error> {
+	let args: Vec<String> = env::args().collect();
+
+	if args.len() == 3 {
+		let searched_str_1 = &args[1];
+		let searched_str_2 = &args[2];
+		return Ok((searched_str_1.to_owned(), searched_str_2.to_owned()));
+	}
+
+	let s = match fs::read_to_string("./config") {
+		Ok(el) => {
+			el
+		}
+		Err(ee) => { //TODO process error
+			let mut b = env::current_exe()?.parent().unwrap().to_owned();
+			b.push("config");
+			fs::read_to_string(b)?
+		}
+	};
+
+	let mut split = s.split("\n");
+
+	Ok((
+		split.next().unwrap().trim().to_owned(),
+		split.next().unwrap().trim().to_owned()
+	))
+}
+
+fn process_switching(ac: &AudioController, name1: &str, name2: &str) -> Result<(), ApplicationError> {
 	let default_sink = ac.get_default_endpoint()?;
 	let default_id = default_sink.id();
 
-	let (device1, device2) = find_devices(ac)?;
+	let (device1, device2) = find_devices(ac, name1, name2)?;
 	let chosen: &Sink = if default_id.eq(device1.id()) {
 		&device2
 	} else {
@@ -65,21 +92,19 @@ fn process_switching(ac: &AudioController) -> Result<(), ApplicationError> {
 	Ok(())
 }
 
-fn find_devices(ac: &AudioController) -> Result<(Sink, Sink), ApplicationError> {
+fn find_devices(ac: &AudioController, searched_str_1: &str, searched_str_2: &str) -> Result<(Sink, Sink), ApplicationError> {
 	let listing = ac.list_audio_sinks()?;
-
-	let args: Vec<String> = env::args().collect();
-	let searched_str_1 = &args[1].to_lowercase();
-	let searched_str_2 = &args[2].to_lowercase();
 
 	let mut first_device: Sink = Sink::default();
 	let mut second_device: Sink = Sink::default();;
 
+	let lowercase_str1 = searched_str_1.to_lowercase();
+	let lowercase_str2 = searched_str_2.to_lowercase();
 	for s in listing {
 		let lower_name = s.name().to_lowercase();
-		if lower_name.contains(searched_str_1) {
+		if lower_name.contains(&lowercase_str1) {
 			first_device = s;
-		} else if lower_name.contains(searched_str_2) {
+		} else if lower_name.contains(&lowercase_str2) {
 			second_device = s;
 		}
 	}
@@ -131,17 +156,9 @@ impl From<rodio::decoder::DecoderError> for ApplicationError {
 	}
 }
 
-
-// impl<T> From<T> for ApplicationError
-// where T: ToString
-// {
-// 	fn from(e: T) -> Self {
-// 		ApplicationError::SoundError(e.to_string())
-// 	}
-// }
-
 fn print_help() {
 	println!("Usage:");
 	println!("\t-l List all audio sinks");
 	println!("\t[SYNK1] [SINK2] switch current default between the mentioned sinks");
+	println!("Or create a 'config' fie with 2 lines indicate which sink in each one of them");
 }
