@@ -113,7 +113,7 @@ fn find_devices(ac: &AudioController, searched_str_1: &str, searched_str_2: &str
 }
 
 #[derive(Debug)]
-enum ApplicationError {
+enum ApplicationError {//TODO add proper errors
 	WrongArgumentsError,
 	Custom(String),
 	ComError(String),
