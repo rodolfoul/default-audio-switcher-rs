@@ -1,16 +1,21 @@
+use std::ffi::c_void;
+
 use com_guard::ComScopeGuard;
 
-use windows::core::{Interface, Result, GUID, HSTRING, PCWSTR};
-use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
-use windows::Win32::Media::Audio::{eCommunications, eConsole, eMultimedia, eRender, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator, DEVICE_STATE_ACTIVE};
-use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL, STGM_READ};
 use crate::audio_ses_definitions::IPolicyConfigVistaClient;
 use crate::com_guard;
 use crate::sink::Sink;
+use windows::core::imp::CoTaskMemFree;
+use windows::core::{Interface, Result, GUID, HSTRING, PCWSTR, PWSTR};
+use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
+use windows::Win32::Media::Audio::{eCommunications, eConsole, eMultimedia, eRender, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator, DEVICE_STATE_ACTIVE};
+use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL, STGM_READ};
 
 pub struct AudioController {
-	com_scope_guard: ComScopeGuard,
+	// Keep this order, to keep drop order, i.e.
+	// imm_device_enumerator is cleaned up before com_scope_guard
 	imm_device_enumerator: IMMDeviceEnumerator,
+	com_scope_guard: ComScopeGuard,
 }
 
 impl AudioController {
@@ -28,8 +33,10 @@ impl AudioController {
 	pub fn get_default_endpoint(&self) -> Result<Sink> {
 		unsafe {
 			let dev = self.imm_device_enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia)?;
-			let id = dev.GetId()?.to_string()?;
+			let pw_id: PWSTR = dev.GetId()?;
+			let id = pw_id.to_string()?;
 			let name = Self::mmdevice_name(&dev)?;
+			CoTaskMemFree(pw_id.0 as *const c_void);
 			Ok(Sink::new(id, name))
 		}
 	}
@@ -59,8 +66,12 @@ impl AudioController {
 			listing = Vec::with_capacity(sink_count as usize);
 			for i in 0..sink_count {
 				let item = device_collection.Item(i)?;
-				let parsed_sink = Sink::new(item.GetId()?.to_string()?, Self::mmdevice_name(&item)?);
+				let pw_id: PWSTR = item.GetId()?;
+
+				let parsed_sink = Sink::new(pw_id.to_string()?, Self::mmdevice_name(&item)?);
 				listing.push(parsed_sink);
+
+				CoTaskMemFree(pw_id.0 as *const c_void)
 			}
 		}
 

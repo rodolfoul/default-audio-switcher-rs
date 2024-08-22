@@ -56,7 +56,7 @@ fn process_names_config() -> Result<(String, String), Error> {
 		return Ok((searched_str_1.to_owned(), searched_str_2.to_owned()));
 	}
 
-	let s = match fs::read_to_string("./config") {
+	let s = match fs::read_to_string("config") {
 		Ok(el) => {
 			el
 		}
@@ -113,7 +113,7 @@ fn find_devices(ac: &AudioController, searched_str_1: &str, searched_str_2: &str
 }
 
 #[derive(Debug)]
-enum ApplicationError {//TODO add proper errors
+enum ApplicationError { //TODO add proper errors
 	WrongArgumentsError,
 	Custom(String),
 	ComError(String),
