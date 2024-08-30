@@ -2,12 +2,14 @@ mod audio_controller;
 mod audio_ses_definitions;
 mod com_guard;
 mod sink;
+mod application_errors;
 
+use crate::application_errors::ApplicationError;
 use crate::sink::Sink;
 use audio_controller::AudioController;
 use rodio::{Decoder, OutputStream};
-use std::io::{Cursor, Error};
-use std::{env, fmt, fs};
+use std::io::{Cursor, Error, ErrorKind};
+use std::{env, fs};
 
 fn main() -> Result<(), ApplicationError> {
 	let args: Vec<String> = env::args().collect();
@@ -22,15 +24,14 @@ fn main() -> Result<(), ApplicationError> {
 	}
 
 	let (dev1, dev2) = match process_names_config() {
-		Ok(el) => { el }
+		Ok((a, b)) => { (a, b) }
 		Err(e) => {
 			print_help();
-
-			return Err(ApplicationError::Custom("Invalid arguments. Use -l to list audio sinks or specify sinks to switch.".to_string()));
+			return Err(e);
 		}
 	};
 
-	process_switching(&ac, &dev1, &dev2)?;
+	process_sink_switching(&ac, &dev1, &dev2)?;
 	play_beep()?;
 	Ok(())
 }
@@ -47,7 +48,7 @@ fn play_beep() -> Result<(), ApplicationError> {
 	Ok(())
 }
 
-fn process_names_config() -> Result<(String, String), Error> {
+fn process_names_config() -> Result<(String, String), ApplicationError> {
 	let args: Vec<String> = env::args().collect();
 
 	if args.len() == 3 {
@@ -56,14 +57,15 @@ fn process_names_config() -> Result<(String, String), Error> {
 		return Ok((searched_str_1.to_owned(), searched_str_2.to_owned()));
 	}
 
-	let s = match fs::read_to_string("config") {
-		Ok(el) => {
-			el
-		}
-		Err(ee) => { //TODO process error
-			let mut b = env::current_exe()?.parent().unwrap().to_owned();
-			b.push("config");
-			fs::read_to_string(b)?
+	let s = match read_config_file() {
+		Ok(s) => { s }
+		Err(e) => {
+			return Err(match e.kind() {
+				ErrorKind::NotFound => {
+					ApplicationError::ConfigError
+				}
+				_ => { ApplicationError::GeneralError(Box::new(e)) }
+			})
 		}
 	};
 
@@ -75,7 +77,29 @@ fn process_names_config() -> Result<(String, String), Error> {
 	))
 }
 
-fn process_switching(ac: &AudioController, name1: &str, name2: &str) -> Result<(), ApplicationError> {
+fn read_config_file() -> Result<String, Error> {
+	//Try current directory
+	let err = match fs::read_to_string("config") {
+		Ok(el) => { return Ok(el) }
+		Err(ee) => { ee }
+	};
+
+	//Try executable directory
+	let exe_search_result = match err.kind() {
+		ErrorKind::NotFound => {
+			let mut b = env::current_exe()?.parent().unwrap().to_owned();
+			b.push("config");
+			fs::read_to_string(b)
+		}
+		_ => {
+			return Err(err)
+		}
+	};
+
+	exe_search_result
+}
+
+fn process_sink_switching(ac: &AudioController, name1: &str, name2: &str) -> Result<(), ApplicationError> {
 	let default_sink = ac.get_default_endpoint()?;
 	let default_id = default_sink.id();
 
@@ -96,7 +120,7 @@ fn find_devices(ac: &AudioController, searched_str_1: &str, searched_str_2: &str
 	let listing = ac.list_audio_sinks()?;
 
 	let mut first_device: Sink = Sink::default();
-	let mut second_device: Sink = Sink::default();;
+	let mut second_device: Sink = Sink::default();
 
 	let lowercase_str1 = searched_str_1.to_lowercase();
 	let lowercase_str2 = searched_str_2.to_lowercase();
@@ -112,53 +136,30 @@ fn find_devices(ac: &AudioController, searched_str_1: &str, searched_str_2: &str
 	Ok((first_device, second_device))
 }
 
-#[derive(Debug)]
-enum ApplicationError { //TODO add proper errors
-	WrongArgumentsError,
-	Custom(String),
-	ComError(String),
-	SoundError(String),
-}
-
-impl fmt::Display for ApplicationError {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "Permission denied")
-	}
-}
-
-impl From<windows::core::Error> for ApplicationError {
-	fn from(e: windows::core::Error) -> Self {
-		ApplicationError::ComError(e.to_string())
-	}
-}
-
-impl From<hound::Error> for ApplicationError {
-	fn from(e: hound::Error) -> Self {
-		ApplicationError::SoundError(e.to_string())
-	}
-}
-
-impl From<rodio::StreamError> for ApplicationError {
-	fn from(e: rodio::StreamError) -> Self {
-		ApplicationError::SoundError(e.to_string())
-	}
-}
-
-impl From<rodio::PlayError> for ApplicationError {
-	fn from(e: rodio::PlayError) -> Self {
-		ApplicationError::SoundError(e.to_string())
-	}
-}
-
-impl From<rodio::decoder::DecoderError> for ApplicationError {
-	fn from(e: rodio::decoder::DecoderError) -> Self {
-		ApplicationError::SoundError(e.to_string())
-	}
-}
-
 fn print_help() {
 	println!("Usage:");
 	println!("\t-l List all audio sinks");
 	println!("\t[SYNK1] [SINK2] switch current default between the mentioned sinks");
-	println!("Or create a 'config' fie with 2 lines indicate which sink in each one of them");
+	println!("Or create a 'config' file with 2 lines. Indicate which sink in each one of them.");
+	println!();
+}
+
+#[cfg(test)]
+mod tests {
+	use crate::application_errors::ApplicationError;
+	use crate::main;
+	use std::env::{current_dir, set_current_dir};
+
+	#[test]
+	fn no_config_error() {
+		let saved_dir = current_dir().unwrap();
+		set_current_dir("..").unwrap();
+		let err = main().unwrap_err();
+		set_current_dir(saved_dir).unwrap();
+
+		match err {
+			ApplicationError::ConfigError => {}
+			_ => panic!("Not expected error!")
+		}
+	}
 }

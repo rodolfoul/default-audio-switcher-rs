@@ -11,6 +11,7 @@ unsafe impl Interface for IPolicyConfigVistaClient {
 }
 
 #[repr(C)]
+#[allow(non_snake_case)]
 pub struct IPolicyConfigVistaClient_Vtbl {
 	pub base__: windows::core::IUnknown_Vtbl,
 	pub GetMixFormat: unsafe extern "system" fn(PCWSTR, *const *const c_void) -> HRESULT,

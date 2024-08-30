@@ -15,21 +15,19 @@ pub struct AudioController {
 	// Keep this order, to keep drop order, i.e.
 	// imm_device_enumerator is cleaned up before com_scope_guard
 	imm_device_enumerator: IMMDeviceEnumerator,
-	com_scope_guard: ComScopeGuard,
+	_com_scope_guard: ComScopeGuard,
 }
 
 impl AudioController {
 	pub fn new() -> Result<Self> {
 		let controller = AudioController {
-			com_scope_guard: ComScopeGuard::new()?,
+			_com_scope_guard: ComScopeGuard::new()?,
 			imm_device_enumerator: unsafe {
 				CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?
 			},
 		};
 		Ok(controller)
 	}
-	pub fn process_switching(&self, device_a: &str, device_b: &str) {}
-
 	pub fn get_default_endpoint(&self) -> Result<Sink> {
 		unsafe {
 			let dev = self.imm_device_enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia)?;
