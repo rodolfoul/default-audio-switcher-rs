@@ -5,11 +5,19 @@ use com_guard::ComScopeGuard;
 use crate::audio_ses_definitions::IPolicyConfigVistaClient;
 use crate::com_guard;
 use crate::sink::Sink;
-use windows::core::imp::CoTaskMemFree;
+use windows::Win32::System::Com::CoTaskMemFree;
 use windows::core::{Interface, Result, GUID, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
 use windows::Win32::Media::Audio::{eCommunications, eConsole, eMultimedia, eRender, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator, DEVICE_STATE_ACTIVE};
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL, STGM_READ};
+
+struct PwstrGuard(PWSTR);
+
+impl Drop for PwstrGuard {
+    fn drop(&mut self) {
+        unsafe { CoTaskMemFree(Some(self.0.0 as *const c_void)) }
+    }
+}
 
 pub struct AudioController {
 	// Keep this order, to keep drop order, i.e.
@@ -31,18 +39,18 @@ impl AudioController {
 	pub fn get_default_endpoint(&self) -> Result<Sink> {
 		unsafe {
 			let dev = self.imm_device_enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia)?;
-			let pw_id: PWSTR = dev.GetId()?;
-			let id = pw_id.to_string()?;
+			let pw_id = PwstrGuard(dev.GetId()?);
+			let id = pw_id.0.to_string()?;
 			let name = Self::mmdevice_name(&dev)?;
-			CoTaskMemFree(pw_id.0 as *const c_void);
 			Ok(Sink::new(id, name))
 		}
 	}
 	pub fn set_default_audio_sink(&self, device_id: &str) -> Result<()> {
 		unsafe {
-			let com_interface: IPolicyConfigVistaClient = CoCreateInstance(&GUID::from("294935ce-f637-4e7c-a41b-ab255460b862"), None, CLSCTX_ALL)?;
+			let com_interface: IPolicyConfigVistaClient = CoCreateInstance(&GUID::from_u128(0x294935ce_f637_4e7c_a41b_ab255460b862), None, CLSCTX_ALL)?;
 
-			let audio_sink_uid = PCWSTR::from_raw(HSTRING::from(device_id).as_ptr());
+			let hstring = HSTRING::from(device_id);
+			let audio_sink_uid = PCWSTR::from_raw(hstring.as_ptr());
 
 			let com_ptr = com_interface.as_raw();
 
@@ -56,23 +64,17 @@ impl AudioController {
 	}
 
 	pub fn list_audio_sinks(&self) -> Result<Vec<Sink>> {
-		let mut listing: Vec<Sink>;
-		unsafe {
+		let listing = unsafe {
 			let device_collection = self.imm_device_enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)?;
-
 			let sink_count = device_collection.GetCount()?;
-			listing = Vec::with_capacity(sink_count as usize);
+			let mut listing = Vec::with_capacity(sink_count as usize);
 			for i in 0..sink_count {
 				let item = device_collection.Item(i)?;
-				let pw_id: PWSTR = item.GetId()?;
-
-				let parsed_sink = Sink::new(pw_id.to_string()?, Self::mmdevice_name(&item)?);
-				listing.push(parsed_sink);
-
-				CoTaskMemFree(pw_id.0 as *const c_void)
+				let pw_id = PwstrGuard(item.GetId()?);
+				listing.push(Sink::new(pw_id.0.to_string()?, Self::mmdevice_name(&item)?));
 			}
-		}
-
+			listing
+		};
 		Ok(listing)
 	}
 

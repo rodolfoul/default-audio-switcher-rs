@@ -7,9 +7,10 @@ mod application_errors;
 use crate::application_errors::ApplicationError;
 use crate::sink::Sink;
 use audio_controller::AudioController;
-use rodio::{Decoder, OutputStream};
+use rodio::Decoder;
 use std::io::{Cursor, Error, ErrorKind};
 use std::{env, fs};
+use std::num::NonZero;
 
 fn main() -> Result<(), ApplicationError> {
 	let args: Vec<String> = env::args().collect();
@@ -23,15 +24,13 @@ fn main() -> Result<(), ApplicationError> {
 		return Ok(());
 	}
 
-	let (dev1, dev2) = match process_names_config() {
-		Ok((a, b)) => { (a, b) }
-		Err(e) => {
-			print_help();
-			return Err(e);
-		}
-	};
+	let (dev1, dev2) = process_names_config(&args).map_err(|e| {
+		print_help();
+		e
+	})?;
 
 	process_sink_switching(&ac, &dev1, &dev2)?;
+	std::thread::sleep(std::time::Duration::from_millis(500));
 	play_beep()?;
 	Ok(())
 }
@@ -40,40 +39,39 @@ fn play_beep() -> Result<(), ApplicationError> {
 	let beep_wav = include_bytes!("./assets/beeping.wav");
 	let decoder = Decoder::new_wav(Cursor::new(beep_wav))?;
 
-	let (_stream, handle) = OutputStream::try_default()?;
-	let sink = rodio::Sink::try_new(&handle)?;
-	sink.append(decoder);
-	sink.sleep_until_end();
+	let mut handle = rodio::DeviceSinkBuilder::open_default_sink()?;
+	handle.log_on_drop(false);
+	let player = rodio::Player::connect_new(&handle.mixer());
+	let channels = NonZero::new(2u16).unwrap();
+	let sample_rate = NonZero::new(44_100u32).unwrap();
+	// silence lets sleeping headsets wake up before the beep and drain the buffer after
+	let silence = |secs: f32| rodio::source::Zero::new_samples(
+		channels,
+		sample_rate,
+		(sample_rate.get() as f32 * channels.get() as f32 * secs) as usize,
+	);
+	player.append(silence(0.8));
+	player.append(decoder);
+	player.append(silence(0.5));
+	player.sleep_until_end();
 
 	Ok(())
 }
 
-fn process_names_config() -> Result<(String, String), ApplicationError> {
-	let args: Vec<String> = env::args().collect();
-
+fn process_names_config(args: &[String]) -> Result<(String, String), ApplicationError> {
 	if args.len() == 3 {
-		let searched_str_1 = &args[1];
-		let searched_str_2 = &args[2];
-		return Ok((searched_str_1.to_owned(), searched_str_2.to_owned()));
+		return Ok((args[1].to_owned(), args[2].to_owned()));
 	}
 
-	let s = match read_config_file() {
-		Ok(s) => { s }
-		Err(e) => {
-			return Err(match e.kind() {
-				ErrorKind::NotFound => {
-					ApplicationError::ConfigError
-				}
-				_ => { ApplicationError::GeneralError(Box::new(e)) }
-			})
-		}
-	};
+	let s = read_config_file().map_err(|e| match e.kind() {
+		ErrorKind::NotFound => ApplicationError::ConfigError,
+		_ => ApplicationError::GeneralError(Box::new(e)),
+	})?;
 
-	let mut split = s.split("\n");
-
+	let mut lines = s.lines();
 	Ok((
-		split.next().unwrap().trim().to_owned(),
-		split.next().unwrap().trim().to_owned()
+		lines.next().unwrap().trim().to_owned(),
+		lines.next().unwrap().trim().to_owned(),
 	))
 }
 
@@ -147,14 +145,14 @@ fn print_help() {
 #[cfg(test)]
 mod tests {
 	use crate::application_errors::ApplicationError;
-	use crate::main;
+	use crate::process_names_config;
 	use std::env::{current_dir, set_current_dir};
 
 	#[test]
 	fn no_config_error() {
 		let saved_dir = current_dir().unwrap();
 		set_current_dir("..").unwrap();
-		let err = main().unwrap_err();
+		let err = process_names_config(&["binary".to_owned()]).unwrap_err();
 		set_current_dir(saved_dir).unwrap();
 
 		match err {

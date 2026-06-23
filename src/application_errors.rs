@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 use rodio::decoder::DecoderError;
-use rodio::{PlayError, StreamError};
+use rodio::DeviceSinkError;
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -36,12 +36,11 @@ impl From<$T> for ApplicationError {
 }
 
 implement_err_conversion!(DecoderError);
-implement_err_conversion!(StreamError);
-implement_err_conversion!(PlayError);
+implement_err_conversion!(DeviceSinkError);
 
 #[cfg(test)]
 mod tests {
-	use rodio::StreamError;
+	use rodio::DeviceSinkError;
 	use windows::core::HRESULT;
 	use crate::application_errors::ApplicationError;
 
@@ -63,7 +62,7 @@ mod tests {
 
 	#[test]
 	fn sound_error_message() {
-		let no_device = StreamError::NoDevice;
+		let no_device = DeviceSinkError::NoDevice;
 		assert_eq!("GeneralError(NoDevice)", ApplicationError::from(no_device).to_string());
 	}
 }
